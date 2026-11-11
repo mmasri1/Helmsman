@@ -14,6 +14,20 @@ mount -t tmpfs -o mode=1777 tmpfs /dev/shm
 mount -t tmpfs -o mode=0755 tmpfs /run
 mount -t tmpfs -o mode=1777 tmpfs /tmp
 
+# Kubernetes node prerequisites (proven by helmsman-kernel-check).
+modprobe overlay
+modprobe br_netfilter
+echo 1 > /proc/sys/net/ipv4/ip_forward
+echo 1 > /proc/sys/net/bridge/bridge-nf-call-iptables
+echo 1 > /proc/sys/net/bridge/bridge-nf-call-ip6tables
+# cgroup v2 only (no systemd to mount it); delegate controllers to child cgroups.
+mkdir -p /sys/fs/cgroup
+mountpoint -q /sys/fs/cgroup || mount -t cgroup2 none /sys/fs/cgroup
+for c in $(cat /sys/fs/cgroup/cgroup.controllers); do
+  echo "+$c" > /sys/fs/cgroup/cgroup.subtree_control
+done
+mount --make-rshared /
+
 hostname "$(cat /etc/hostname)"
 ip link set lo up
 
