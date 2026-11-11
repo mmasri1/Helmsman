@@ -6,7 +6,7 @@ cd "$(dirname "$0")/.."
 
 ROOTFS=build/rootfs
 IMG=build/helmsman.img
-SIZE=${SIZE:-1G}
+SIZE=${SIZE:-2G}
 MNT=build/mnt
 
 [ -d "$ROOTFS" ] || { echo "run scripts/build-rootfs.sh first" >&2; exit 1; }
