@@ -9,7 +9,8 @@ Steering Debian toward Kubernetes. A tiny, read-only OS whose only job is to run
 - Read-only root
 
 ## Status
-✅ Milestone 1: a minimal debootstrap (trixie) rootfs boots in QEMU. Still on systemd; s6 is Milestone 2.
+✅ Milestone 1: a minimal debootstrap (trixie) rootfs boots in QEMU.
+✅ Milestone 2: systemd is gone. PID 1 is a tiny shell stage-1 that hands over to `s6-svscan`; services (serial getty, DHCP) live in `overlay/etc/s6/service`. `poweroff`/`reboot` work. Next up: containerd + kubelet.
 
 ```sh
 scripts/setup-host.sh     # install tooling
