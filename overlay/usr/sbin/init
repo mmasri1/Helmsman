@@ -1,0 +1,22 @@
+#!/bin/sh
+# Helmsman stage 1: set up the bare minimum, then hand over to s6-svscan.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+umask 022
+exec 0</dev/console 1>/dev/console 2>&1
+
+mount -n -o remount,rw /
+mountpoint -q /proc || mount -t proc proc /proc
+mountpoint -q /sys  || mount -t sysfs sysfs /sys
+mountpoint -q /dev  || mount -t devtmpfs devtmpfs /dev
+mkdir -p /dev/pts /dev/shm
+mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=1777 tmpfs /dev/shm
+mount -t tmpfs -o mode=0755 tmpfs /run
+mount -t tmpfs -o mode=1777 tmpfs /tmp
+
+hostname "$(cat /etc/hostname)"
+ip link set lo up
+
+# Service tree lives in tmpfs so it is writable even with a read-only root.
+cp -a /etc/s6/service /run/service
+exec s6-svscan /run/service

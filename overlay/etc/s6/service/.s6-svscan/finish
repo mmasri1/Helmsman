@@ -1,0 +1,13 @@
+#!/bin/sh
+# Stage 3: runs after `s6-svscanctl -t`. Mode is poweroff unless told otherwise.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+mode=$(cat /run/helmsman-shutdown 2>/dev/null || echo poweroff)
+echo "helmsman: stopping ($mode)"
+kill -TERM -1; sleep 1; kill -KILL -1
+sync
+umount -a -r 2>/dev/null
+case "$mode" in
+  reboot) exec busybox reboot -f ;;
+  halt)   exec busybox halt -f ;;
+  *)      exec busybox poweroff -f ;;
+esac

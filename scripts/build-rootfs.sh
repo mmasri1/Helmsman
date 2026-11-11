@@ -7,8 +7,8 @@ cd "$(dirname "$0")/.."
 ROOTFS=build/rootfs
 SUITE=${SUITE:-trixie}
 MIRROR=${MIRROR:-http://deb.debian.org/debian}
-# Milestone 1 keeps systemd; Milestone 2 swaps it for s6.
-INCLUDE=linux-image-cloud-amd64,systemd-sysv,ifupdown,isc-dhcp-client,iproute2,e2fsprogs,initramfs-tools
+# Init is s6 (Milestone 2): no systemd-sysv; init and services come from overlay/.
+INCLUDE=linux-image-cloud-amd64,s6,execline,busybox-static,isc-dhcp-client,iproute2,e2fsprogs,initramfs-tools
 
 sudo rm -rf "$ROOTFS"
 mkdir -p build
@@ -17,20 +17,15 @@ sudo debootstrap --variant=minbase --include="$INCLUDE" "$SUITE" "$ROOTFS" "$MIR
 # Basic config
 echo helmsman | sudo tee "$ROOTFS/etc/hostname" >/dev/null
 echo "127.0.0.1 localhost helmsman" | sudo tee "$ROOTFS/etc/hosts" >/dev/null
-sudo tee "$ROOTFS/etc/network/interfaces" >/dev/null <<'NET'
-auto lo
-iface lo inet loopback
-auto eth0
-iface eth0 inet dhcp
-NET
-# Test-only: empty root password and autologin on the serial console.
+# Test-only: empty root password (serial autologin is in the s6 getty service).
 sudo chroot "$ROOTFS" passwd -d root
-sudo mkdir -p "$ROOTFS/etc/systemd/system/serial-getty@ttyS0.service.d"
-sudo tee "$ROOTFS/etc/systemd/system/serial-getty@ttyS0.service.d/autologin.conf" >/dev/null <<'GETTY'
-[Service]
-ExecStart=
-ExecStart=-/sbin/agetty --autologin root --noclear %I $TERM
-GETTY
+
+# Make sure systemd is gone, then install the s6 init and service tree.
+if sudo chroot "$ROOTFS" dpkg -s systemd >/dev/null 2>&1; then
+  sudo chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get purge -y --allow-remove-essential systemd systemd-sysv
+  sudo chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get autoremove -y --purge
+fi
+sudo cp -a overlay/. "$ROOTFS"/
 
 # Prune
 sudo chroot "$ROOTFS" apt-get clean

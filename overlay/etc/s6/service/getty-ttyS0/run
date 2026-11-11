@@ -1,0 +1,4 @@
+#!/bin/sh
+# Test-only autologin on the serial console (see README).
+exec 2>&1
+exec agetty --autologin root --noclear ttyS0 115200 vt102
