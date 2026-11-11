@@ -1,0 +1,5 @@
+#!/bin/sh
+exec 2>&1
+# No s6-rc, so order by hand: wait for containerd's socket.
+while [ ! -S /run/containerd/containerd.sock ]; do sleep 1; done
+exec kubelet --config=/var/lib/kubelet/config.yaml --hostname-override=helmsman

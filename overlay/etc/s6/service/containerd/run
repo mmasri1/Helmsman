@@ -1,0 +1,4 @@
+#!/bin/sh
+exec 2>&1
+mkdir -p /run/containerd
+exec containerd --config /etc/containerd/config.toml
