@@ -1,0 +1,19 @@
+# Claude-related (never commit)
+CLAUDE.md
+.claude/
+CONTEXT.md
+
+# Secrets
+*.pem
+*.key
+SSH.txt
+
+# Build output
+build/
+out/
+images/
+rootfs/
+*.img
+*.qcow2
+*.raw
+*.iso
