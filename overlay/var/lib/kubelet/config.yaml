@@ -1,0 +1,17 @@
+# Helmsman: cgroupfs driver to match containerd (no systemd).
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: cgroupfs
+containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
+staticPodPath: /etc/kubernetes/manifests
+failSwapOn: false
+# Standalone (no API server yet, Milestone 4): no webhook auth is possible, so the
+# kubelet API is open but bound to localhost only. Switch to webhook once joined.
+address: 127.0.0.1
+authentication:
+  anonymous:
+    enabled: true
+  webhook:
+    enabled: false
+authorization:
+  mode: AlwaysAllow
