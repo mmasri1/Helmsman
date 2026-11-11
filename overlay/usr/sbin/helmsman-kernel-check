@@ -1,0 +1,28 @@
+#!/bin/sh
+# Runtime proof that the running kernel can host Kubernetes. Run inside the guest.
+# Prints "KCHECK <name>: ok|FAIL ..." per item, then "KCHECK RESULT: PASS|FAIL".
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+rc=0
+ok()   { echo "KCHECK $1: ok"; }
+bad()  { echo "KCHECK $1: FAIL ($2)"; rc=1; }
+
+modprobe overlay 2>/dev/null; grep -qw overlay /proc/filesystems && ok overlay || bad overlay "not in /proc/filesystems"
+modprobe br_netfilter 2>/dev/null
+[ -e /proc/sys/net/bridge/bridge-nf-call-iptables ] && ok br_netfilter || bad br_netfilter "no bridge-nf-call-iptables sysctl"
+
+echo 1 > /proc/sys/net/ipv4/ip_forward 2>/dev/null
+[ "$(cat /proc/sys/net/ipv4/ip_forward)" = 1 ] && ok ip_forward || bad ip_forward "cannot enable"
+
+grep -qw cgroup2 /proc/filesystems || bad cgroup2 "kernel lacks cgroup2"
+mountpoint -q /sys/fs/cgroup || mount -t cgroup2 none /sys/fs/cgroup 2>/dev/null
+if [ "$(stat -f -c %T /sys/fs/cgroup)" = cgroup2fs ]; then
+  ok cgroup2
+  ctl=$(cat /sys/fs/cgroup/cgroup.controllers)
+  for c in cpu memory pids cpuset; do
+    case " $ctl " in *" $c "*) ok "controller-$c";; *) bad "controller-$c" "have: $ctl";; esac
+  done
+else
+  bad cgroup2 "/sys/fs/cgroup is not cgroup2"
+fi
+[ $rc = 0 ] && echo "KCHECK RESULT: PASS" || echo "KCHECK RESULT: FAIL"
+exit $rc
