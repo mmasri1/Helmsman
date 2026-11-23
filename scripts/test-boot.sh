@@ -35,7 +35,7 @@ echo 'echo KUBELET_$(for i in $(seq 120); do busybox wget -qO- http://127.0.0.1:
 wait_for 'KUBELET_healthy' "kubelet /healthz ok"
 echo 'echo SVC_$(s6-svstat -u /run/service/containerd)_$(s6-svstat -u /run/service/kubelet)' >&3
 wait_for 'SVC_true_true' "s6 reports containerd and kubelet up"
-echo 'echo CG_$(grep -h cgroupDriver /var/lib/kubelet/config.yaml | tr -d " ")_$(grep -h SystemdCgroup /etc/containerd/config.toml | tr -d " ")' >&3
+echo 'echo CG_$(grep -h cgroupDriver /etc/kubernetes/kubelet.yaml | tr -d " ")_$(grep -h SystemdCgroup /etc/containerd/config.toml | tr -d " ")' >&3
 wait_for 'CG_cgroupDriver:cgroupfs_SystemdCgroup=false' "both configured for the cgroupfs driver"
 # Runtime evidence: cgroupfs driver makes "kubepods"; the systemd driver would make kubepods.slice.
 echo 'echo KP_$(test -d /sys/fs/cgroup/kubepods && ! test -e /sys/fs/cgroup/kubepods.slice && echo cgroupfs)_$(ctr plugins ls | grep -c "io.containerd.grpc.v1 *cri .* ok")' >&3

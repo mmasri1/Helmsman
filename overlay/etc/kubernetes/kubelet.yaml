@@ -1,4 +1,5 @@
 # Helmsman: cgroupfs driver to match containerd (no systemd).
+# Lives in /etc (read-only OS); /var/lib/kubelet is runtime state only.
 apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 cgroupDriver: cgroupfs
