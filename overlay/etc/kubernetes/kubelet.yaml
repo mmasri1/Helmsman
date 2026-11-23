@@ -6,7 +6,7 @@ cgroupDriver: cgroupfs
 containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
 staticPodPath: /etc/kubernetes/manifests
 failSwapOn: false
-# Standalone (no API server yet, Milestone 4): no webhook auth is possible, so the
+# Standalone (no API server yet; joining a cluster is Milestone 5): no webhook auth is possible, so the
 # kubelet API is open but bound to localhost only. Switch to webhook once joined.
 address: 127.0.0.1
 authentication:
