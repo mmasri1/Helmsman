@@ -1,3 +1,12 @@
 #!/bin/sh
 exec 2>&1
-exec dhclient -d -v eth0
+# The NIC name depends on the kernel/udev naming (eth0, ens3, enp0s3...): take the
+# first non-loopback interface instead of hard-coding one.
+iface=
+while [ -z "$iface" ]; do
+  for d in /sys/class/net/*; do
+    n=${d##*/}; [ "$n" = lo ] || { iface=$n; break; }
+  done
+  [ -n "$iface" ] || sleep 1
+done
+exec dhclient -d -v "$iface"
