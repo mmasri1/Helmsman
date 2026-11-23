@@ -5,6 +5,9 @@ mode=$(cat /run/helmsman-shutdown 2>/dev/null || echo poweroff)
 echo "helmsman: stopping ($mode)"
 kill -TERM -1; sleep 1; kill -KILL -1
 sync
+# /var is the only read-write disk filesystem: unmount it (and container mounts under
+# it) cleanly, or at least remount it read-only so the next fsck finds it clean.
+umount -R /var 2>/dev/null || mount -o remount,ro /var 2>/dev/null
 umount -a -r 2>/dev/null
 case "$mode" in
   reboot) exec busybox reboot -f ;;

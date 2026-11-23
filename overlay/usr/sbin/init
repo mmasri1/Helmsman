@@ -4,7 +4,7 @@ export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 umask 022
 exec 0</dev/console 1>/dev/console 2>&1
 
-mount -n -o remount,rw /
+# The root filesystem stays read-only (kernel cmdline "ro", fstab "ro").
 mountpoint -q /proc || mount -t proc proc /proc
 mountpoint -q /sys  || mount -t sysfs sysfs /sys
 mountpoint -q /dev  || mount -t devtmpfs devtmpfs /dev
@@ -13,6 +13,19 @@ mountpoint -q /dev/pts || mount -t devpts devpts /dev/pts
 mount -t tmpfs -o mode=1777 tmpfs /dev/shm
 mount -t tmpfs -o mode=0755 tmpfs /run
 mount -t tmpfs -o mode=1777 tmpfs /tmp
+
+# Mutable state lives on the helmsman-data partition at /var. Check it first;
+# fsck exit codes 0/1 mean clean or fixed, anything else is worth shouting about.
+data=$(blkid -L helmsman-data)
+if [ -n "$data" ]; then
+  fsck.ext4 -p "$data"; rc=$?
+  echo $rc > /run/helmsman-fsck-var   # 0 = clean, i.e. the last shutdown unmounted /var
+  [ $rc -le 1 ] || echo "helmsman: fsck of $data returned $rc" >&2
+  mount -t ext4 -o rw "$data" /var || echo "helmsman: cannot mount $data on /var" >&2
+else
+  echo "helmsman: no helmsman-data partition; /var is a tmpfs, nothing will persist" >&2
+  mount -t tmpfs -o mode=0755 tmpfs /var
+fi
 
 # Kubernetes node prerequisites (proven by helmsman-kernel-check).
 modprobe overlay
