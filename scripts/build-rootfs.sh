@@ -39,7 +39,9 @@ sudo chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive sh -c \
 
 # systemd must not have crept back in via the new packages.
 if sudo chroot "$ROOTFS" dpkg -s systemd >/dev/null 2>&1; then echo "systemd got installed" >&2; exit 1; fi
-sudo cp -a overlay/. "$ROOTFS"/
+# Install the overlay owned by root and without group/other write: a plain `cp -a`
+# would carry the builder's uid and umask onto /, /usr/sbin/init and the services.
+tar -C overlay --owner=0 --group=0 --numeric-owner --mode=go-w -cf - . | sudo tar -C "$ROOTFS" -xpf -
 
 # Prune
 sudo chroot "$ROOTFS" apt-get clean
