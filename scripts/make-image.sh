@@ -10,8 +10,17 @@ IMG=build/helmsman.img
 SIZE=${SIZE:-3G}
 ROOT_SIZE=${ROOT_SIZE:-2048MiB}   # the rest of the image goes to the data partition
 MNT=build/mnt
+# Optional: a join.env (SERVER, TOKEN, CA_HASH, ...; see helmsman-join) seeded onto the data
+# partition, so every machine booted from this image joins the cluster on its first boot.
+JOIN_ENV=${JOIN_ENV:-}
 
 [ -d "$ROOTFS" ] || { echo "run scripts/build-rootfs.sh first" >&2; exit 1; }
+if [ -n "$JOIN_ENV" ]; then
+  for k in SERVER TOKEN CA_HASH; do
+    grep -q "^$k=" "$JOIN_ENV" || { echo "JOIN_ENV $JOIN_ENV has no $k=" >&2; exit 1; }
+  done
+  grep -q '^NODE_NAME=' "$JOIN_ENV" && echo "note: NODE_NAME in $JOIN_ENV gives every machine from this image the same node name" >&2
+fi
 LOOP=
 cleanup() {
   set +e
@@ -38,6 +47,11 @@ sudo tee "$MNT/etc/fstab" >/dev/null <<F
 UUID=$UUID / ext4 ro,errors=remount-ro 0 1
 LABEL=helmsman-data /var ext4 rw,errors=remount-ro 0 2
 F
+if [ -n "$JOIN_ENV" ]; then
+  sudo install -d -m 0755 "$MNT/var/lib/helmsman"
+  sudo install -m 0600 -o 0 -g 0 "$JOIN_ENV" "$MNT/var/lib/helmsman/join.env"
+  echo "seeded join.env: the node joins $(sed -n 's/^SERVER=//p' "$JOIN_ENV") on first boot"
+fi
 
 sudo mount --bind /dev "$MNT/dev"; sudo mount -t devpts devpts "$MNT/dev/pts"
 sudo mount -t proc proc "$MNT/proc"; sudo mount -t sysfs sys "$MNT/sys"
