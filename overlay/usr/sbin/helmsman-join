@@ -1,0 +1,143 @@
+#!/bin/sh
+# helmsman-join: join this node to a Kubernetes cluster with a bootstrap token.
+#
+#   helmsman-join --server https://10.0.0.1:6443 --token abcdef.0123456789abcdef \
+#                 --ca-cert-hash sha256:<hex> [--node-name NAME] [--cluster-dns IP] [--cluster-domain D]
+#   helmsman-join --from-env [FILE]      # same settings from FILE (default /var/lib/helmsman/join.env)
+#
+# It does what `kubeadm join` does for a worker, without writing to the read-only root:
+#  1. fetch the CA from the kube-public/cluster-info ConfigMap (anonymous, TLS not yet trusted),
+#  2. refuse it unless its public-key hash matches --ca-cert-hash (the same pin kubeadm prints),
+#  3. write the CA, a bootstrap kubeconfig and a kubelet drop-in under /var,
+#  4. restart the kubelet, which then requests its client certificate (TLS bootstrap).
+# The settings are saved to join.env so the node rejoins on its own if its kubelet state is lost.
+set -eu
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+# HELMSMAN_ROOT prefixes every state path (tests run this on the build host).
+R=${HELMSMAN_ROOT-}
+ENV_FILE=$R/var/lib/helmsman/join.env
+PKI=$R/var/lib/helmsman/pki
+DROPIN_DIR=$R/var/lib/helmsman/kubelet.conf.d
+BOOTSTRAP=$R/var/lib/kubelet/bootstrap-kubeconfig
+KUBECONFIG=$R/var/lib/kubelet/kubeconfig
+
+die() { echo "helmsman-join: $*" >&2; exit 1; }
+usage() { sed -n '2,7p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+SERVER= TOKEN= CA_HASH= NODE_NAME= CLUSTER_DNS= CLUSTER_DOMAIN=
+from_env=
+while [ $# -gt 0 ]; do
+  case $1 in
+    --server) SERVER=${2-}; shift 2 ;;
+    --token) TOKEN=${2-}; shift 2 ;;
+    --ca-cert-hash) CA_HASH=${2-}; shift 2 ;;
+    --node-name) NODE_NAME=${2-}; shift 2 ;;
+    --cluster-dns) CLUSTER_DNS=${2-}; shift 2 ;;
+    --cluster-domain) CLUSTER_DOMAIN=${2-}; shift 2 ;;
+    --from-env) from_env=1; case ${2-} in ''|--*) shift ;; *) ENV_FILE=$2; shift 2 ;; esac ;;
+    -h|--help) usage ;;
+    *) die "unknown argument: $1" ;;
+  esac
+done
+
+if [ -n "$from_env" ]; then
+  [ -r "$ENV_FILE" ] || die "no $ENV_FILE"
+  # KEY=VALUE lines only; never source it (it may come from a seeded, untrusted disk).
+  while IFS='=' read -r k v; do
+    case $k in
+      SERVER|TOKEN|CA_HASH|NODE_NAME|CLUSTER_DNS|CLUSTER_DOMAIN) eval "$k=\$v" ;;
+    esac
+  done <<EOF
+$(grep -E '^[A-Z_]+=' "$ENV_FILE" | tr -d "\"'\r")
+EOF
+fi
+
+# Validate before touching the network or the disk.
+case $SERVER in https://?*) ;; *) die "--server must be an https:// URL (got '$SERVER')" ;; esac
+SERVER=${SERVER%/}
+echo "$TOKEN" | grep -Eq '^[a-z0-9]{6}\.[a-z0-9]{16}$' || die "--token must look like abcdef.0123456789abcdef"
+echo "$CA_HASH" | grep -Eq '^sha256:[0-9a-fA-F]{64}$' || die "--ca-cert-hash must be sha256:<64 hex chars>"
+CA_HASH=$(echo "$CA_HASH" | tr 'A-F' 'a-f')
+if [ -z "$NODE_NAME" ]; then
+  # The image is identical on every machine (same hostname, same machine-id), so name the
+  # node after its first NIC's MAC address instead.
+  for d in /sys/class/net/*; do
+    [ "${d##*/}" = lo ] && continue
+    NODE_NAME=helmsman-$(tr -d ':' < "$d/address" | tail -c 7); break
+  done
+  [ -n "$NODE_NAME" ] || NODE_NAME=helmsman
+fi
+echo "$NODE_NAME" | grep -Eq '^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$' || die "invalid node name '$NODE_NAME'"
+CLUSTER_DNS=${CLUSTER_DNS:-10.96.0.10}
+CLUSTER_DOMAIN=${CLUSTER_DOMAIN:-cluster.local}
+
+tmp=$(mktemp -d)
+trap 'rm -rf "$tmp"' EXIT
+
+# 1. Discovery. TLS is not verified here on purpose: the CA we get back is checked against the pin.
+curl -fsSk --max-time 20 -o "$tmp/cluster-info.json" \
+  "$SERVER/api/v1/namespaces/kube-public/configmaps/cluster-info" \
+  || die "cannot fetch cluster-info from $SERVER"
+# The kubeconfig is a JSON string; the base64 CA has no characters JSON would escape.
+ca_b64=$(grep -o 'certificate-authority-data: *[A-Za-z0-9+/=]*' "$tmp/cluster-info.json" | head -1 | sed 's/.*: *//')
+[ -n "$ca_b64" ] || die "cluster-info from $SERVER has no certificate-authority-data"
+echo "$ca_b64" | base64 -d > "$tmp/ca.crt" 2>/dev/null || die "cluster CA is not valid base64"
+openssl x509 -noout -in "$tmp/ca.crt" 2>/dev/null || die "cluster CA is not a PEM certificate"
+
+# 2. Pin: sha256 of the CA's DER-encoded SubjectPublicKeyInfo, as kubeadm computes it.
+got=sha256:$(openssl x509 -noout -pubkey -in "$tmp/ca.crt" | openssl pkey -pubin -outform der | sha256sum | cut -d' ' -f1)
+[ "$got" = "$CA_HASH" ] || die "cluster CA hash mismatch: expected $CA_HASH, got $got (refusing to trust $SERVER)"
+echo "helmsman-join: cluster CA verified ($got)"
+
+# 3. State, all on the data partition. Write each file whole, then move it into place.
+mkdir -p "$PKI" "$DROPIN_DIR" "$R/var/lib/kubelet"
+install -m 0644 "$tmp/ca.crt" "$PKI/ca.crt"
+umask 077
+cat > "$tmp/bootstrap" <<EOF
+apiVersion: v1
+kind: Config
+clusters:
+- name: cluster
+  cluster:
+    server: $SERVER
+    certificate-authority: $PKI/ca.crt
+users:
+- name: tls-bootstrap
+  user:
+    token: $TOKEN
+contexts:
+- name: tls-bootstrap
+  context:
+    cluster: cluster
+    user: tls-bootstrap
+current-context: tls-bootstrap
+EOF
+mv "$tmp/bootstrap" "$BOOTSTRAP"
+cat > "$tmp/env" <<EOF
+SERVER=$SERVER
+TOKEN=$TOKEN
+CA_HASH=$CA_HASH
+NODE_NAME=$NODE_NAME
+CLUSTER_DNS=$CLUSTER_DNS
+CLUSTER_DOMAIN=$CLUSTER_DOMAIN
+EOF
+mv "$tmp/env" "$ENV_FILE"
+umask 022
+cat > "$tmp/dropin" <<EOF
+# Written by helmsman-join. Cluster-specific kubelet settings; the rest is /etc/kubernetes/kubelet-cluster.yaml.
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+clusterDNS:
+- $CLUSTER_DNS
+clusterDomain: $CLUSTER_DOMAIN
+EOF
+mv "$tmp/dropin" "$DROPIN_DIR/10-helmsman-join.conf"
+# A kubeconfig from an earlier cluster would make the kubelet skip the bootstrap.
+rm -f "$KUBECONFIG" "$R"/var/lib/kubelet/pki/kubelet-client-*
+
+# 4. Hand over to the kubelet (its run script picks cluster mode when the bootstrap kubeconfig exists).
+if [ -z "${HELMSMAN_JOIN_NO_RESTART-}" ] && [ -z "$R" ] && [ -d /run/service/kubelet ]; then
+  s6-svc -r /run/service/kubelet
+fi
+echo "helmsman-join: node $NODE_NAME will join $SERVER (TLS bootstrap; approve its CSR if your cluster does not auto-approve)"

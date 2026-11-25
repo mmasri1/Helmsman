@@ -30,6 +30,8 @@ fi
 K8S_MINOR=${K8S_MINOR:-v1.37}
 KUBELET_VERSION=${KUBELET_VERSION:-1.37.2-1.1}
 sudo chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates containerd runc
+# Milestone 5: helmsman-join fetches cluster-info with curl and pins the CA with openssl.
+sudo chroot "$ROOTFS" env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends curl openssl
 sudo mkdir -p "$ROOTFS/etc/apt/keyrings"
 curl -fsSL "https://pkgs.k8s.io/core:/stable:/$K8S_MINOR/deb/Release.key" | sudo tee "$ROOTFS/etc/apt/keyrings/kubernetes-apt-keyring.asc" >/dev/null
 echo "deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc] https://pkgs.k8s.io/core:/stable:/$K8S_MINOR/deb/ /" \
