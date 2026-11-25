@@ -7,6 +7,7 @@ serves over HTTPS:
 
   GET  /api/v1/namespaces/kube-public/configmaps/cluster-info   the CA, as kubeadm publishes it
   POST /apis/certificates.k8s.io/v1/certificatesigningrequests  logged, never approved
+                                                                (JSON, or protobuf as the kubelet sends it)
   GET  /apis/certificates.k8s.io/v1/certificatesigningrequests  an empty list
 
 Every CSR is logged as one line to --log:
@@ -36,6 +37,56 @@ from cryptography.x509.oid import NameOID
 
 CLUSTER_INFO = "/api/v1/namespaces/kube-public/configmaps/cluster-info"
 CSRS = "/apis/certificates.k8s.io/v1/certificatesigningrequests"
+
+
+def pb_fields(buf):
+    """Yield (field number, value) from a protobuf message; length-delimited values as bytes."""
+    i = 0
+
+    def varint():
+        nonlocal i
+        shift = n = 0
+        while True:
+            b = buf[i]
+            i += 1
+            n |= (b & 0x7F) << shift
+            shift += 7
+            if b < 0x80:
+                return n
+
+    while i < len(buf):
+        key = varint()
+        field, wire = key >> 3, key & 7
+        if wire == 0:
+            yield field, varint()
+        elif wire == 2:
+            n = varint()
+            yield field, buf[i:i + n]
+            i += n
+        elif wire in (1, 5):
+            i += 8 if wire == 1 else 4
+        else:
+            raise ValueError("unsupported protobuf wire type %d" % wire)
+
+
+def csr_from_protobuf(body):
+    """Decode a CertificateSigningRequest sent as application/vnd.kubernetes.protobuf (what
+    the kubelet uses): magic "k8s\0", then runtime.Unknown{raw=2}, then the CSR{metadata=1,
+    spec=2}, spec{request=1, usages=5, signerName=7}. Returns the same shape as the JSON form."""
+    if not body.startswith(b"k8s\x00"):
+        raise ValueError("not a kubernetes protobuf body")
+    raw = dict(pb_fields(body[4:]))[2]
+    msg = dict(pb_fields(raw))
+    spec = {"usages": []}
+    for f, v in pb_fields(msg[2]):
+        if f == 1:
+            spec["request"] = base64.b64encode(v).decode()
+        elif f == 5:
+            spec["usages"].append(v.decode())
+        elif f == 7:
+            spec["signerName"] = v.decode()
+    return {"kind": "CertificateSigningRequest", "apiVersion": "certificates.k8s.io/v1",
+            "metadata": {}, "spec": spec}
 
 
 def make_pki(d):
@@ -126,7 +177,10 @@ def main():
             body = self.rfile.read(int(self.headers.get("Content-Length") or 0))
             if self.path.split("?")[0] != CSRS:
                 return self.not_found()
-            obj = json.loads(body)
+            if "protobuf" in self.headers.get("Content-Type", ""):
+                obj = csr_from_protobuf(body)
+            else:
+                obj = json.loads(body)
             csr = x509.load_pem_x509_csr(base64.b64decode(obj["spec"]["request"]))
             attr = lambda oid: ",".join(v.value for v in csr.subject.get_attributes_for_oid(oid))
             auth = self.headers.get("Authorization", "")
