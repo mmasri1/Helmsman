@@ -2,4 +2,24 @@
 exec 2>&1
 # No s6-rc, so order by hand: wait for containerd's socket.
 while [ ! -S /run/containerd/containerd.sock ]; do sleep 1; done
+
+ENV=/var/lib/helmsman/join.env
+BOOTSTRAP=/var/lib/kubelet/bootstrap-kubeconfig
+KUBECONFIG=/var/lib/kubelet/kubeconfig
+
+# A join.env seeded on the data partition (or left by an earlier join whose kubelet
+# state was wiped) joins on its own. Until the network is up this fails; s6 retries.
+if [ -f "$ENV" ] && [ ! -f "$BOOTSTRAP" ] && [ ! -f "$KUBECONFIG" ]; then
+  HELMSMAN_JOIN_NO_RESTART=1 helmsman-join --from-env || { sleep 10; exit 1; }
+fi
+
+if [ -f "$BOOTSTRAP" ] || [ -f "$KUBECONFIG" ]; then
+  name=$(sed -n 's/^NODE_NAME=//p' "$ENV" 2>/dev/null)
+  exec kubelet --config=/etc/kubernetes/kubelet-cluster.yaml \
+    --config-dir=/var/lib/helmsman/kubelet.conf.d \
+    --bootstrap-kubeconfig="$BOOTSTRAP" --kubeconfig="$KUBECONFIG" \
+    --hostname-override="${name:-helmsman}"
+fi
+
+# Not joined: standalone, static pods only.
 exec kubelet --config=/etc/kubernetes/kubelet.yaml --hostname-override=helmsman

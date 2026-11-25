@@ -1,0 +1,21 @@
+# Helmsman, joined to a cluster (see helmsman-join). Same runtime settings as the
+# standalone kubelet.yaml, plus real authn/authz now that there is an API server.
+# Cluster-specific values (clusterDNS, clusterDomain) come from the drop-in that
+# helmsman-join writes to /var/lib/helmsman/kubelet.conf.d.
+apiVersion: kubelet.config.k8s.io/v1beta1
+kind: KubeletConfiguration
+cgroupDriver: cgroupfs
+containerRuntimeEndpoint: unix:///run/containerd/containerd.sock
+staticPodPath: /etc/kubernetes/manifests
+failSwapOn: false
+# The client certificate comes from TLS bootstrap and is renewed before it expires.
+rotateCertificates: true
+authentication:
+  anonymous:
+    enabled: false
+  webhook:
+    enabled: true
+  x509:
+    clientCAFile: /var/lib/helmsman/pki/ca.crt
+authorization:
+  mode: Webhook
